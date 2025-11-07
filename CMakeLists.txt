@@ -24,17 +24,7 @@ install(
   RENAME slerp_planner
 )
 
-install(
-  PROGRAMS cartesian_planner/sline_planner.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME sline_planner
-)
 
-install(
-  PROGRAMS cartesian_planner/human_reach_planner.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME human_reach_planner
-)
 
 
 ament_export_dependencies(rosidl_default_runtime)

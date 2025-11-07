@@ -4,7 +4,7 @@
   <name>cartesian_planner</name>
   <version>0.0.1</version>
   <description>Standalone SLERP-based Cartesian trajectory planner for Eddie arms.</description>
-  <maintainer email="ashlesh@example.com">Ashlesh</maintainer>
+  <maintainer email="ashp6368@gmail.com">Ashlesh</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
