@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Standalone SLERP-based Cartesian planner node."""
 
 from __future__ import annotations
 
-import math
 from typing import List
 
 import rclpy
@@ -17,10 +15,10 @@ import tf2_ros
 import tf2_geometry_msgs  # noqa: F401
 import numpy as np
 from tf_transformations import (
-    quaternion_slerp,
     quaternion_matrix,
     quaternion_from_matrix,
 )
+from scipy.spatial.transform import Rotation as R, Slerp
 
 
 def pose_to_tf(pose: Pose) -> tuple:
@@ -41,15 +39,9 @@ class SlerpPlanner(Node):
 
         self.declare_parameter("base_frame", "eddie_base_link")
         self.declare_parameter("ee_frame", "eddie_right_arm_robotiq_85_grasp_link")
-        self.declare_parameter("safe_hover_z", 0.8)
-        self.declare_parameter("torso_clear_radius", 0.32)
-        self.declare_parameter("radius_clearance", 0.05)
 
         self.base_frame = self.get_parameter("base_frame").get_parameter_value().string_value
         self.ee_frame = self.get_parameter("ee_frame").get_parameter_value().string_value
-        self.safe_hover_z = float(self.get_parameter("safe_hover_z").value)
-        self.torso_clear_radius = float(self.get_parameter("torso_clear_radius").value)
-        self.radius_clearance = float(self.get_parameter("radius_clearance").value)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -130,148 +122,86 @@ class SlerpPlanner(Node):
         max_translation_step: float,
         max_rotation_step: float,
     ) -> List[Pose]:
-        sx, sy, sz, qsx, qsy, qsz, qsw = pose_to_tf(start)
-        gx, gy, gz, qgx, qgy, qgz, qgw = pose_to_tf(goal)
+        start_pos = np.array([start.position.x, start.position.y, start.position.z], dtype=float)
+        goal_pos = np.array([goal.position.x, goal.position.y, goal.position.z], dtype=float)
+        translation_distance = float(np.linalg.norm(goal_pos - start_pos))
 
-        translation_distance = math.sqrt((gx - sx) ** 2 + (gy - sy) ** 2 + (gz - sz) ** 2)
+        start_rot = R.from_quat([start.orientation.x, start.orientation.y, start.orientation.z, start.orientation.w])
+        goal_rot = R.from_quat([goal.orientation.x, goal.orientation.y, goal.orientation.z, goal.orientation.w])
+        angle = float((start_rot.inv() * goal_rot).magnitude())
 
-        def normalize(qx: float, qy: float, qz: float, qw: float) -> tuple:
-            norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
-            if norm < 1e-12:
-                return (0.0, 0.0, 0.0, 1.0)
-            return (qx / norm, qy / norm, qz / norm, qw / norm)
-
-        qsx, qsy, qsz, qsw = normalize(qsx, qsy, qsz, qsw)
-        qgx, qgy, qgz, qgw = normalize(qgx, qgy, qgz, qgw)
-
-        dot = qsx * qgx + qsy * qgy + qsz * qgz + qsw * qgw
-        angle = 2.0 * math.acos(min(1.0, max(-1.0, abs(dot))))
-
-        translation_steps = int(math.ceil(translation_distance / max_translation_step)) if translation_distance > 1e-4 else 0
-        rotation_steps = int(math.ceil(angle / max_rotation_step)) if angle > 1e-4 else 0
+        translation_steps = int(np.ceil(translation_distance / max_translation_step)) if translation_distance > 1e-4 else 0
+        rotation_steps = int(np.ceil(angle / max_rotation_step)) if angle > 1e-4 else 0
         steps = max(translation_steps, rotation_steps, 1)
 
-        waypoints: List[Pose] = []
+        ts = np.linspace(0.0, 1.0, steps + 1, dtype=float)[1:]
+        slerp = Slerp([0.0, 1.0], R.from_quat([start_rot.as_quat(), goal_rot.as_quat()]))
+        interp_rots = slerp(ts)
+        interp_positions = start_pos + np.outer(ts, (goal_pos - start_pos))
 
-        prev_pos = (sx, sy, sz)
-        prev_quat = (qsx, qsy, qsz, qsw)
+        absolute_poses: List[Pose] = []
+        for pos, quat in zip(interp_positions, interp_rots.as_quat()):
+            pose = Pose()
+            pose.position.x, pose.position.y, pose.position.z = pos
+            pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat
+            absolute_poses.append(pose)
 
-        for i in range(steps):
-            t = float(i + 1) / float(steps)
-            interp_pos = (
-                sx + (gx - sx) * t,
-                sy + (gy - sy) * t,
-                sz + (gz - sz) * t,
-            )
-            interp_quat = quaternion_slerp(
-                (qsx, qsy, qsz, qsw),
-                (qgx, qgy, qgz, qgw),
-                t,
-            )
-
-            rel_pos = (
-                interp_pos[0] - prev_pos[0],
-                interp_pos[1] - prev_pos[1],
-                interp_pos[2] - prev_pos[2],
-            )
-
-            prev_matrix = quaternion_matrix(prev_quat)
-            prev_matrix[0:3, 3] = prev_pos
-
-            current_matrix = quaternion_matrix(interp_quat)
-            current_matrix[0:3, 3] = interp_pos
-
-            rel_matrix = np.dot(np.linalg.inv(prev_matrix), current_matrix)
-
-            rel_pos = rel_matrix[0:3, 3]
-            rel_quat = quaternion_from_matrix(rel_matrix)
-
-            waypoint = Pose()
-            waypoint.position.x = rel_pos[0]
-            waypoint.position.y = rel_pos[1]
-            waypoint.position.z = rel_pos[2]
-            waypoint.orientation.x = rel_quat[0]
-            waypoint.orientation.y = rel_quat[1]
-            waypoint.orientation.z = rel_quat[2]
-            waypoint.orientation.w = rel_quat[3]
-            waypoints.append(waypoint)
-
-            prev_pos = interp_pos
-            prev_quat = interp_quat
-
-        return waypoints
+        return self._absolute_to_relative(start, absolute_poses)
 
     # ------------------------------------------------------------------
     # Helper methods for constrained path generation
     # ------------------------------------------------------------------
 
     def _build_absolute_path(self, start: Pose, goal: Pose) -> List[Pose]:
-        eps = 1e-4
-        hover_z = max(self.safe_hover_z, start.position.z, goal.position.z)
-        path: List[Pose] = []
-
-        # Helper to avoid duplicate consecutive poses
-        def append_pose(p: Pose):
-            if not path:
-                path.append(p)
-                return
-            last = path[-1]
-            if self._pose_distance(last, p) > eps:
-                path.append(p)
-
-        current = start
-
-        if abs(current.position.z - hover_z) > eps:
-            append_pose(self._make_pose(current.position.x, current.position.y, hover_z, current.orientation))
-            current = path[-1]
-
-        safe_start_xy = self._adjust_xy(current.position.x, current.position.y)
-        if abs(safe_start_xy[0] - current.position.x) > eps or abs(safe_start_xy[1] - current.position.y) > eps:
-            append_pose(self._make_pose(safe_start_xy[0], safe_start_xy[1], hover_z, current.orientation))
-            current = path[-1]
-
-        safe_goal_xy = self._adjust_xy(goal.position.x, goal.position.y)
-        append_pose(self._make_pose(safe_goal_xy[0], safe_goal_xy[1], hover_z, goal.orientation))
-        current = path[-1]
-
-        if abs(goal.position.z - hover_z) > eps:
-            append_pose(self._make_pose(goal.position.x, goal.position.y, hover_z, goal.orientation))
-
-        append_pose(goal)
-
-        return path
-
-    def _make_pose(self, x: float, y: float, z: float, orientation) -> Pose:
-        pose = Pose()
-        pose.position.x = x
-        pose.position.y = y
-        pose.position.z = z
-        pose.orientation.x = orientation.x
-        pose.orientation.y = orientation.y
-        pose.orientation.z = orientation.z
-        pose.orientation.w = orientation.w
-        return pose
+        if self._pose_distance(start, goal) <= 1e-4:
+            return []
+        return [goal]
 
     def _pose_distance(self, a: Pose, b: Pose) -> float:
-        dx = a.position.x - b.position.x
-        dy = a.position.y - b.position.y
-        dz = a.position.z - b.position.z
-        return math.sqrt(dx * dx + dy * dy + dz * dz)
+        vec_a = np.array([a.position.x, a.position.y, a.position.z], dtype=float)
+        vec_b = np.array([b.position.x, b.position.y, b.position.z], dtype=float)
+        return float(np.linalg.norm(vec_a - vec_b))
 
-    def _adjust_xy(self, x: float, y: float) -> tuple:
-        min_radius = self.torso_clear_radius + self.radius_clearance
-        r = math.sqrt(x * x + y * y)
-        if r >= min_radius:
-            return x, y
+    def _absolute_to_relative(self, start_pose: Pose, absolute: List[Pose]) -> List[Pose]:
+        if not absolute:
+            return []
 
-        if r < 1e-4:
-            angle = -math.pi / 2.0  # default to pointing forward (negative Y)
-        else:
-            angle = math.atan2(y, x)
+        rel_waypoints: List[Pose] = []
+        prev_pose = start_pose
+        for pose in absolute:
+            prev_matrix = quaternion_matrix((
+                prev_pose.orientation.x,
+                prev_pose.orientation.y,
+                prev_pose.orientation.z,
+                prev_pose.orientation.w,
+            ))
+            prev_matrix[0:3, 3] = [prev_pose.position.x, prev_pose.position.y, prev_pose.position.z]
 
-        x = math.cos(angle) * min_radius
-        y = math.sin(angle) * min_radius
-        return x, y
+            current_matrix = quaternion_matrix((
+                pose.orientation.x,
+                pose.orientation.y,
+                pose.orientation.z,
+                pose.orientation.w,
+            ))
+            current_matrix[0:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
+
+            rel_matrix = np.dot(np.linalg.inv(prev_matrix), current_matrix)
+            rel_quat = quaternion_from_matrix(rel_matrix)
+
+            waypoint = Pose()
+            waypoint.position.x = rel_matrix[0, 3]
+            waypoint.position.y = rel_matrix[1, 3]
+            waypoint.position.z = rel_matrix[2, 3]
+            waypoint.orientation.x = rel_quat[0]
+            waypoint.orientation.y = rel_quat[1]
+            waypoint.orientation.z = rel_quat[2]
+            waypoint.orientation.w = rel_quat[3]
+            rel_waypoints.append(waypoint)
+
+            prev_pose = pose
+
+        return rel_waypoints
+
 
 
 def main() -> None:
