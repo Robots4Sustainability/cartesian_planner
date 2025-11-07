@@ -285,27 +285,27 @@ def main() -> None:
         if node is not None:
             node.get_logger().info("SLERP planner interrupted by user.")
     except Exception as e:
-        # Catch any unexpected exception so we can still cleanly shut down
+
         if node is not None:
             node.get_logger().error(f"Unexpected exception: {e}")
         raise
     finally:
-        # Ensure proper cleanup no matter how we exit
+
         if node is not None:
             node.get_logger().info("Destroying SLERP planner node...")
             node.destroy_node()
 
-        # Always call shutdown unconditionally
+
         if rclpy.ok():
             rclpy.shutdown()
         else:
-            # If already shutdown, call it again safely (it's idempotent)
+
             try:
                 rclpy.shutdown()
             except Exception:
                 pass
 
-        # Optional: give DDS a moment to propagate the change
+
         import time
         time.sleep(1.0)
 
