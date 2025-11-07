@@ -1,0 +1,7 @@
+geometry_msgs/PoseStamped target_pose
+float64 max_translation_step
+float64 max_rotation_step
+---
+bool success
+geometry_msgs/Pose[] relative_waypoints
+string message
