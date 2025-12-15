@@ -6,6 +6,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(rclpy REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -15,6 +17,8 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/PlanCartesianPath.srv"
+  "srv/PlanScanPath.srv"
+  "action/PlanSpline.action"
   DEPENDENCIES geometry_msgs
 )
 
@@ -24,7 +28,24 @@ install(
   RENAME slerp_planner
 )
 
+install(
+  PROGRAMS cartesian_planner/spline_planner.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME spline_planner
+)
 
+
+install(
+  PROGRAMS cartesian_planner/interactive_pose_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME interactive_pose_publisher
+)
+
+install(
+  DIRECTORY cartesian_planner/
+  DESTINATION lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/cartesian_planner
+  FILES_MATCHING PATTERN "*.py"
+)
 
 
 ament_export_dependencies(rosidl_default_runtime)
