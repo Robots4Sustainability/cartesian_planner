@@ -22,3 +22,23 @@ This package provides a ROS 2 action server that converts an end-effector–fra
 
 
 The action result returns `success`/`message`; feedback publishes progress (0–1). Relative waypoints are sent directly to `right_arm/arm_control`.
+
+## Raster Scan
+
+The `spline_planner` also exposes a service to perform a raster scan motion relative to a center pose.
+
+- **Service**: `/plan_scan_path` (`cartesian_planner/srv/PlanScanPath`)
+- **Example**:
+  ```bash
+  ros2 service call /plan_scan_path cartesian_planner/srv/PlanScanPath "{center_pose: {header: {frame_id: eddie_base_link}, pose: {position: {x: 0.5, y: -0.3, z: 0.7}, orientation: {w: 1.0}}}, width: 0.5, height: 0.2, spacing: 0.05, line_spacing: 0.1}"
+  ```
+
+### Parameters
+
+- **center_pose**: The center point `(x, y, z)` of the scan pattern.
+  - The scan is generated in the **Y-Z plane** of the base frame at the specified `x` depth.
+- **width**: Total extent of the scan area along the **Y-axis** (horizontal).
+- **height**: Total extent of the scan area along the **Z-axis** (vertical).
+- **spacing**: Distance between waypoints along each horizontal line (scan resolution).
+- **line_spacing**: Vertical distance between horizontal scan lines.
+
