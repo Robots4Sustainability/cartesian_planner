@@ -16,17 +16,11 @@ find_package(geometry_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "srv/PlanCartesianPath.srv"
   "srv/PlanScanPath.srv"
   "action/PlanSpline.action"
   DEPENDENCIES geometry_msgs
 )
 
-install(
-  PROGRAMS cartesian_planner/slerp_planner.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME slerp_planner
-)
 
 install(
   PROGRAMS cartesian_planner/spline_planner.py
@@ -34,12 +28,6 @@ install(
   RENAME spline_planner
 )
 
-
-install(
-  PROGRAMS cartesian_planner/interactive_pose_publisher.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME interactive_pose_publisher
-)
 
 install(
   DIRECTORY cartesian_planner/
