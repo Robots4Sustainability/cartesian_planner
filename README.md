@@ -9,6 +9,7 @@ This package provides a ROS 2 action server that converts an end-effector–fra
 
 
 ## Usage
+- Run [Eddie-Ros](https://github.com/Robots4Sustainability/eddie-ros/tree/dev)
 
 - Run the planner:
   ```
