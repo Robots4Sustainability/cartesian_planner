@@ -1,0 +1,7 @@
+# Goal: target pose expressed in end-effector frame (relative move)
+geometry_msgs/Pose target_pose
+---
+bool success
+string message
+---
+float32 progress

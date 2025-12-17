@@ -1,61 +1,45 @@
-# Cartesian Planner
+# Cartesian Planner (Spline)
 
-This package provides a standalone ROS 2 service that converts absolute end-effector
-targets into a sequence of waypoints using spherical linear interpolation (SLERP).
+This package provides a ROS 2 action server that converts an end-effector–frame goal pose into a spline of waypoints and executes them through `ArmControl`.
 
-## Node Overview
+## Nodes
 
-`slerp_planner` is a Python node (`cartesian_planner/slerp_planner.py`) that exposes a
-single ROS 2 service:
+- `spline_planner` (`cartesian_planner/spline_planner.py`): Action server `spline_plan` (action: `cartesian_planner/PlanSpline`). Goal pose is expressed in the EE frame; the node looks up the current EE pose, transforms the goal to the base frame, builds a cubic spline for translation, keeps orientation fixed, converts to relative deltas, and feeds them sequentially to `ArmControl`.
 
-```
-/plan_cartesian_path (cartesian_planner/srv/PlanCartesianPath)
-```
-
-The request contains:
-
-- `target_pose` – absolute goal pose, expressed in any TF frame (default
-  `eddie_base_link`).
-- `max_translation_step` – maximum linear distance for each waypoint.
-- `max_rotation_step` – maximum angular change per waypoint (radians).
-
-The response returns:
-
-- `relative_waypoints` – a list of incremental poses that can be sent directly to the
-  Eddie arm `ArmControl` action (which expects relative offsets).
-- `success`/`message` – status of the planning call.
 
 
 ## Usage
+- Run [Eddie-Ros](https://github.com/Robots4Sustainability/eddie-ros/tree/dev)
 
-### Standalone
+- Run the planner:
+  ```
+  ros2 run cartesian_planner spline_planner
+  ```
 
-```
-ros2 run cartesian_planner slerp_planner
-```
+- CLI test (send a +5 cm EE-frame move in Z):
+  ```
+  ros2 action send_goal spline_plan cartesian_planner/action/PlanSpline "{ target_pose: { position: {x: 0.0, y: 0.0, z: 0.05}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0} } }"
+  ```
 
-**!! Please try only in simulation !!** :
 
-```
-ros2 launch eddie_ros eddie.launch.py use_sim:=true arm_select:=right
-```
-```
-ros2 launch eddie_ros rviz.launch.py
-```
+The action result returns `success`/`message`; feedback publishes progress (0–1). Relative waypoints are sent directly to `right_arm/arm_control`.
 
-**please ensure branch : `dsl/pick_place_fsm` for Finite-State-Machine**
+## Raster Scan
 
-```
-ros2 run pick_place_fsm pick_place_fsm_mock
-```
-publish Pose
+The `spline_planner` also exposes a service to perform a raster scan motion relative to a center pose.
 
-```
-ros2 topic pub --once /perception/target_pose geometry_msgs/msg/PoseStamped "{header: {frame_id: eddie_base_link }, pose: {position: {x: 0, y: 0.5, z: 0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}"
+- **Service**: `/plan_scan_path` (`cartesian_planner/srv/PlanScanPath`)
+- **Example**:
+  ```bash
+  ros2 service call /plan_scan_path cartesian_planner/srv/PlanScanPath "{center_pose: {header: {frame_id: eddie_base_link}, pose: {position: {x: 0.5, y: -0.3, z: 0.7}, orientation: {w: 1.0}}}, width: 0.5, height: 0.2, spacing: 0.05, line_spacing: 0.1}"
+  ```
 
-```
+### Parameters
 
-The service returns the incremental waypoints; a client can feed these to the
-`right_arm/arm_control` action in sequence.
-
+- **center_pose**: The center point `(x, y, z)` of the scan pattern.
+  - The scan is generated in the **Y-Z plane** of the base frame at the specified `x` depth.
+- **width**: Total extent of the scan area along the **Y-axis** (horizontal).
+- **height**: Total extent of the scan area along the **Z-axis** (vertical).
+- **spacing**: Distance between waypoints along each horizontal line (scan resolution).
+- **line_spacing**: Vertical distance between horizontal scan lines.
 
