@@ -3,7 +3,7 @@
 <package format="3">
   <name>cartesian_planner</name>
   <version>0.0.1</version>
-  <description>Standalone SLERP-based Cartesian trajectory planner for Eddie arms.</description>
+  <description>Standalone Spline-based Cartesian trajectory planner for Eddie arms.</description>
   <maintainer email="ashp6368@gmail.com">Ashlesh</maintainer>
   <license>Apache-2.0</license>
 
