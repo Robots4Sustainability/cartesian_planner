@@ -347,3 +347,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+#ros2 service call /plan_scan_path cartesian_planner/srv/PlanScanPath "{top_left: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.62, y: 0.26, z: 0.84}, orientation: {w: 1.0}}}, top_right: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.64, y: -0.08, z: 0.80}, orientation: {w: 1.0}}}, bottom_right: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.67, y: -0.24, z: 0.44}, orientation: {w: 1.0}}}, bottom_left: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.61, y: 0.30, z: 0.42}, orientation: {w: 1.0}}}}"
