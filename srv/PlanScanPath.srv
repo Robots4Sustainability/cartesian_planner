@@ -1,8 +1,7 @@
-geometry_msgs/PoseStamped center_pose
-float64 width
-float64 height
-float64 spacing       # in-line spacing (along width)
-float64 line_spacing  # spacing between horizontal lines (height direction); if 0 use spacing
+geometry_msgs/PoseStamped top_left
+geometry_msgs/PoseStamped top_right
+geometry_msgs/PoseStamped bottom_right
+geometry_msgs/PoseStamped bottom_left
 ---
 bool success
 string message
