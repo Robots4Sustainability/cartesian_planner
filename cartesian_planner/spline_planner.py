@@ -35,7 +35,7 @@ class SplinePlanner(Node):
     def __init__(self) -> None:
         super().__init__("spline_planner")
         self.declare_parameter("base_frame", "eddie_base_link")
-        self.declare_parameter("ee_frame", "eddie_right_arm_end_effector_link")
+        self.declare_parameter("ee_frame", "eddie_right_arm_robotiq_85_grasp_link")
         self.declare_parameter("arm_action_server", "right_arm/arm_control")
 
         self.cb_group = ReentrantCallbackGroup()
@@ -48,7 +48,7 @@ class SplinePlanner(Node):
 
         self.arm_client = ActionClient(self, ArmControl, self.arm_action_server, callback_group=self.cb_group)
         self.path_pub = self.create_publisher(Marker, "/spline_scan_path", 10)
-        self.detected_objects: dict = {}
+        self.detected_screws: list[dict] = []
 
         self.scan_service = self.create_service(PlanScanPath, "plan_scan_path", self.handle_scan_request, callback_group=self.cb_group)
 
@@ -107,16 +107,16 @@ class SplinePlanner(Node):
         return True
 
     async def precieve_objects(self) -> None:
-        time.sleep(3.0)
+        time.sleep(1.0)
         if random.random() < 0.75:
-            self.get_logger().info("No objects found")
+            self.get_logger().info("No screws found")
             return
 
         frame_id = "eddie_right_arm_camera_link"
-        class_name = random.choice(("speaker", "ecu"))
-        detection = {
-            "class": class_name,
+        screw_pose = {
+            "class": "screw",
             "confidence": round(random.uniform(0.60, 0.99), 3),
+            "radius": 0.01,
             "pose": {
                 "frame_id": frame_id,
                 "position": {
@@ -127,22 +127,16 @@ class SplinePlanner(Node):
                 "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
             },
         }
-
-        previous = self.detected_objects.get(class_name)
-        if previous is None or detection["confidence"] > previous["confidence"]:
-            self.detected_objects[class_name] = detection
-            self.get_logger().info(f"Updated {class_name} (mock): {detection}")
-        else:
-            self.get_logger().info(
-                f"Skipped {class_name} (mock): new confidence {detection['confidence']} <= stored {previous['confidence']}"
-            )
+        screw_pose["id"] = len(self.detected_screws) + 1
+        self.detected_screws.append(screw_pose)
+        self.get_logger().info(f"Detected screw pose (mock): {screw_pose}")
 
 
     # ----- Raster scan (service) -----
     async def handle_scan_request(self, request, response):
         spacing_along = 0.10 # diff b/w each waypoint
         spacing_lines = 0.12 # diff b/w horizontal parallel lines
-        self.detected_objects = {}
+        self.detected_screws = []
 
         start_pose = self._get_current_pose()
         if start_pose is None or isinstance(start_pose, Exception):
@@ -175,7 +169,7 @@ class SplinePlanner(Node):
         if success:
             response.success = True
             response.message = json.dumps(
-                {"status": "Raster executed", "detected_objects": self.detected_objects}
+                {"status": "Raster executed", "screw_poses": self.detected_screws}
             )
         else:
             response.success = False
@@ -347,4 +341,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-#ros2 service call /plan_scan_path cartesian_planner/srv/PlanScanPath "{top_left: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.62, y: 0.26, z: 0.84}, orientation: {w: 1.0}}}, top_right: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.64, y: -0.08, z: 0.80}, orientation: {w: 1.0}}}, bottom_right: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.67, y: -0.24, z: 0.44}, orientation: {w: 1.0}}}, bottom_left: {header: {frame_id: 'eddie_base_link'}, pose: {position: {x: 0.61, y: 0.30, z: 0.42}, orientation: {w: 1.0}}}}"
