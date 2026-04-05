@@ -16,6 +16,8 @@ ros2 run cartesian_planner raster_scanner
 
 The node exposes a raster-scan service and executes the scan through `ArmControl`.
 
+![Raster scan path](images/RasterPath.png)
+
 At a high level it:
 
 1. receives four corner poses
