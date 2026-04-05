@@ -23,14 +23,14 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 
 install(
-  PROGRAMS cartesian_planner/spline_planner.py
+  PROGRAMS src/raster_scanner.py
   DESTINATION lib/${PROJECT_NAME}
-  RENAME spline_planner
+  RENAME raster_scanner
 )
 
 
 install(
-  DIRECTORY cartesian_planner/
+  DIRECTORY src/
   DESTINATION lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}/site-packages/cartesian_planner
   FILES_MATCHING PATTERN "*.py"
 )

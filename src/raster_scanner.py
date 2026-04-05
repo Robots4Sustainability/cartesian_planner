@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""
-Planner with action server:
-- Accepts a goal pose expressed in the end-effector frame (relative move).
-- Looks up current EE pose, transforms goal to base frame, generates a straight-line path,
-  converts absolute samples to relative deltas, and sends them to ArmControl sequentially.
-- Performs a raster scan when triggered with a service call and publishes a path marker.
-"""
+"""Raster scan planner for the Eddie right arm."""
 
 from typing import List
 
-import asyncio
 import json
-import random
 import numpy as np
 import rclpy
 from rclpy.action import ActionClient
@@ -22,6 +14,7 @@ from geometry_msgs.msg import Pose, PoseStamped
 from tf2_ros import Buffer, TransformListener
 from cartesian_planner.srv import PlanScanPath
 from eddie_ros.action import ArmControl
+from my_robot_interfaces.action import RunVision
 from scipy.interpolate import interp1d
 import tf_transformations
 import tf2_geometry_msgs  # Registers PoseStamped transforms for tf2
@@ -31,22 +24,25 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 import time 
 
-class SplinePlanner(Node):
+class RasterScanner(Node):
     def __init__(self) -> None:
-        super().__init__("spline_planner")
+        super().__init__("raster_scanner")
         self.declare_parameter("base_frame", "eddie_base_link")
         self.declare_parameter("ee_frame", "eddie_right_arm_robotiq_85_grasp_link")
         self.declare_parameter("arm_action_server", "right_arm/arm_control")
+        self.declare_parameter("perception_action_server", "run_perception_pipeline")
 
         self.cb_group = ReentrantCallbackGroup()
         self.base_frame = self.get_parameter("base_frame").value
         self.ee_frame = self.get_parameter("ee_frame").value
         self.arm_action_server = self.get_parameter("arm_action_server").value
+        self.perception_action_server = self.get_parameter("perception_action_server").value
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.arm_client = ActionClient(self, ArmControl, self.arm_action_server, callback_group=self.cb_group)
+        self.perception_client = ActionClient(self, RunVision, self.perception_action_server, callback_group=self.cb_group)
         self.path_pub = self.create_publisher(Marker, "/spline_scan_path", 10)
         self.detected_screws: list[dict] = []
 
@@ -74,6 +70,24 @@ class SplinePlanner(Node):
         pose.position.z = tf.transform.translation.z
         pose.orientation = tf.transform.rotation
         return pose
+
+    def _is_duplicate_screw(self, pose_stamped: PoseStamped, threshold: float = 0.01) -> bool:
+        pose = pose_stamped.pose
+        frame_id = pose_stamped.header.frame_id
+
+        for existing in self.detected_screws:
+            existing_pose = existing.get("pose", {})
+            if existing_pose.get("frame_id") != frame_id:
+                continue
+
+            position = existing_pose.get("position", {})
+            dx = pose.position.x - float(position.get("x", 0.0))
+            dy = pose.position.y - float(position.get("y", 0.0))
+            dz = pose.position.z - float(position.get("z", 0.0))
+            # Treat detections within this Euclidean distance as the same screw.
+            if np.linalg.norm([dx, dy, dz]) < threshold:
+                return True
+        return False
 
     async def _execute_waypoints(self, abs_waypoints: List[Pose], fixed_orientation) -> bool:
         total = len(abs_waypoints)
@@ -103,33 +117,62 @@ class SplinePlanner(Node):
                 msg = result.result_message if hasattr(result, "result_message") else result.message
                 self.get_logger().error(f"Waypoint failed: {msg}")
                 return False
-            await self.precieve_objects()
+            await self.detect_screws_at_waypoint()
         return True
 
-    async def precieve_objects(self) -> None:
+    async def detect_screws_at_waypoint(self) -> None:
+        # Give the arm a moment to settle before asking perception for a screw pose.
         time.sleep(1.0)
-        if random.random() < 0.75:
-            self.get_logger().info("No screws found")
+        if not self.perception_client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().error(f"Perception action server not available: {self.perception_action_server}")
             return
 
-        frame_id = "eddie_right_arm_camera_link"
-        screw_pose = {
-            "class": "screw",
-            "confidence": round(random.uniform(0.60, 0.99), 3),
-            "radius": 0.01,
-            "pose": {
-                "frame_id": frame_id,
-                "position": {
-                    "x": round(random.uniform(0.25, 0.75), 3),
-                    "y": round(random.uniform(-0.30, 0.30), 3),
-                    "z": round(random.uniform(-0.15, 0.45), 3),
+        goal = RunVision.Goal()
+        goal.task_name = "detect_screws"
+        goal.object_class = ""
+        goal.time_duration = 0.0
+
+        goal_handle = await self.perception_client.send_goal_async(goal)
+        if not goal_handle.accepted:
+            self.get_logger().error("Perception goal rejected during detect_screws.")
+            return
+
+        result = (await goal_handle.get_result_async()).result
+        if result is None or not result.success or not result.poses:
+            message = "no response" if result is None else (result.message.strip() if result.message else "no screws found")
+            self.get_logger().info(f"No screws found at this waypoint: {message}")
+            return
+
+        for pose_stamped in result.poses:
+            if self._is_duplicate_screw(pose_stamped):
+                self.get_logger().info("Skipping duplicate screw pose.")
+                continue
+
+            pose = pose_stamped.pose
+            screw_pose = {
+                "id": len(self.detected_screws) + 1,
+                "class": "screw",
+                "radius": float(result.estimated_value),
+                "pose": {
+                    "frame_id": pose_stamped.header.frame_id,
+                    "position": {
+                        "x": pose.position.x,
+                        "y": pose.position.y,
+                        "z": pose.position.z,
+                    },
+                    "orientation": {
+                        "x": pose.orientation.x,
+                        "y": pose.orientation.y,
+                        "z": pose.orientation.z,
+                        "w": pose.orientation.w,
+                    },
                 },
-                "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-            },
-        }
-        screw_pose["id"] = len(self.detected_screws) + 1
-        self.detected_screws.append(screw_pose)
-        self.get_logger().info(f"Detected screw pose (mock): {screw_pose}")
+            }
+            self.detected_screws.append(screw_pose)
+            self.get_logger().info(
+                f"Detected screw {screw_pose['id']} at "
+                f"({pose.position.x:.3f}, {pose.position.y:.3f}, {pose.position.z:.3f})"
+            )
 
 
     # ----- Raster scan (service) -----
@@ -259,7 +302,7 @@ class SplinePlanner(Node):
             marker.points.append(pt)
 
         self.path_pub.publish(marker)
-    #will changed later to use SLerp
+
     def _relative_from_current(self, current: Pose, target: Pose) -> Pose:
         prev_matrix = tf_transformations.quaternion_matrix((
             current.orientation.x,
@@ -327,7 +370,7 @@ class SplinePlanner(Node):
 
 def main() -> None:
     rclpy.init()
-    node = SplinePlanner()
+    node = RasterScanner()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:

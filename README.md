@@ -1,45 +1,101 @@
-# Cartesian Planner (Spline)
+# Cartesian Planner (Raster Scanner)
 
-This package provides a ROS 2 action server that converts an end-effector–frame goal pose into a spline of waypoints and executes them through `ArmControl`.
+This package provides the raster-scan node used by the door-disassembly workflow.
 
-## Nodes
+## Main node
 
-- `spline_planner` (`cartesian_planner/spline_planner.py`): Action server `spline_plan` (action: `cartesian_planner/PlanSpline`). Goal pose is expressed in the EE frame; the node looks up the current EE pose, transforms the goal to the base frame, builds a cubic spline for translation, keeps orientation fixed, converts to relative deltas, and feeds them sequentially to `ArmControl`.
+- `raster_scanner` (`src/raster_scanner.py`)
+
+Run it with:
+
+```bash
+ros2 run cartesian_planner raster_scanner
+```
+
+## What it does
+
+The node exposes a raster-scan service and executes the scan through `ArmControl`.
+
+At a high level it:
+
+1. receives four corner poses
+2. generates a raster path between those corners
+3. sends waypoints to `right_arm/arm_control`
+4. after each waypoint, requests perception with:
+   - `task_name = detect_screws`
+5. stores any detected screw poses
+6. returns the collected screw poses in the scan service response
+
+If perception finds no screw at a waypoint, that is treated as a normal result, not as a scan failure.
+
+## Raster generation algorithm
+
+The raster path is built from the four corner poses as follows:
+
+1. transform all four corners into the base frame if needed
+2. treat `top_left -> bottom_left` as the left scan edge
+3. treat `top_right -> bottom_right` as the right scan edge
+4. interpolate points along both vertical edges using SciPy linear interpolation (`scipy.interpolate.interp1d`) and the configured line spacing
+5. connect each left/right pair in alternating order to create a zig-zag raster
+6. sample that polyline again with SciPy linear interpolation using the waypoint spacing
+7. keep the end-effector orientation fixed to the orientation of the starting pose
+8. convert each absolute waypoint into a relative move before sending it to `ArmControl`
 
 
+## Interfaces
 
-## Usage
-- Run [Eddie-Ros](https://github.com/Robots4Sustainability/eddie-ros/tree/dev)
+### Service
 
-- Run the planner:
-  ```
-  ros2 run cartesian_planner spline_planner
-  ```
+- `/plan_scan_path`
+- type: `cartesian_planner/srv/PlanScanPath`
 
-- CLI test (send a +5 cm EE-frame move in Z):
-  ```
-  ros2 action send_goal spline_plan cartesian_planner/action/PlanSpline "{ target_pose: { position: {x: 0.0, y: 0.0, z: 0.05}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0} } }"
-  ```
+The request uses four corner poses:
 
+- `top_left`
+- `top_right`
+- `bottom_right`
+- `bottom_left`
 
-The action result returns `success`/`message`; feedback publishes progress (0–1). Relative waypoints are sent directly to `right_arm/arm_control`.
+The response returns:
 
-## Raster Scan
+- `success`
+- `message`
 
-The `spline_planner` also exposes a service to perform a raster scan motion relative to a center pose.
+When successful, `message` contains JSON with:
 
-- **Service**: `/plan_scan_path` (`cartesian_planner/srv/PlanScanPath`)
-- **Example**:
-  ```bash
-  ros2 service call /plan_scan_path cartesian_planner/srv/PlanScanPath "{center_pose: {header: {frame_id: eddie_base_link}, pose: {position: {x: 0.5, y: -0.3, z: 0.7}, orientation: {w: 1.0}}}, width: 0.5, height: 0.2, spacing: 0.05, line_spacing: 0.1}"
-  ```
+```json
+{
+  "status": "Raster executed",
+  "screw_poses": [...]
+}
+```
 
-### Parameters
+### Action used internally
 
-- **center_pose**: The center point `(x, y, z)` of the scan pattern.
-  - The scan is generated in the **Y-Z plane** of the base frame at the specified `x` depth.
-- **width**: Total extent of the scan area along the **Y-axis** (horizontal).
-- **height**: Total extent of the scan area along the **Z-axis** (vertical).
-- **spacing**: Distance between waypoints along each horizontal line (scan resolution).
-- **line_spacing**: Vertical distance between horizontal scan lines.
+The node uses the perception action server:
 
+- `/run_perception_pipeline`
+- type: `my_robot_interfaces/action/RunVision`
+
+It sends:
+
+```text
+task_name = detect_screws
+object_class = ""
+time_duration = 0.0
+```
+
+## How door_disassemble uses it
+
+When raster scan is enabled in `door_disassemble`:
+
+1. perception first provides 4 subdoor corner poses
+2. `door_disassemble` sends those 4 poses to `/plan_scan_path`
+3. `raster_scanner` executes the raster scan
+4. screw poses found during the scan are returned in the service response
+5. `door_disassemble` stores those poses and later passes them to `screwdriver_pick`
+
+## Notes
+
+- screw detections are de-duplicated by Euclidean distance
+- duplicate detections from nearby waypoints are skipped
