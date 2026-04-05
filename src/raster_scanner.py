@@ -43,7 +43,7 @@ class RasterScanner(Node):
 
         self.arm_client = ActionClient(self, ArmControl, self.arm_action_server, callback_group=self.cb_group)
         self.perception_client = ActionClient(self, RunVision, self.perception_action_server, callback_group=self.cb_group)
-        self.path_pub = self.create_publisher(Marker, "/spline_scan_path", 10)
+        self.path_pub = self.create_publisher(Marker, "/raster_scan_path", 10)
         self.detected_screws: list[dict] = []
 
         self.scan_service = self.create_service(PlanScanPath, "plan_scan_path", self.handle_scan_request, callback_group=self.cb_group)
@@ -283,7 +283,7 @@ class RasterScanner(Node):
         marker = Marker()
         marker.header.frame_id = self.base_frame
         marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = "spline_scan"
+        marker.ns = "raster_scan"
         marker.id = 0
         marker.type = Marker.LINE_STRIP
         marker.action = Marker.ADD
